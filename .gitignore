@@ -205,3 +205,18 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project specific data directories
+import/
+output/
+trash/
+backup_*/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS files
+desktop.ini
+.DS_Store
