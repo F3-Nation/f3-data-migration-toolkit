@@ -194,6 +194,43 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                     'display_name': author.findtext('wp:author_display_name', namespaces=ns) or ''
                 }
     
+    def extract_explicit_date_and_ao(text, locations_map):
+        if not text:
+            return None, None
+            
+        date_patterns = [
+            r'(Jan(?:uary|\.)?|Feb(?:ruary|\.)?|Mar(?:ch|\.)?|Apr(?:il|\.)?|May|Jun(?:e|\.)?|Jul(?:y|\.)?|Aug(?:ust|\.)?|Sep(?:tember|\.|t\.)?|Oct(?:ober|\.)?|Nov(?:ember|\.)?|Dec(?:ember|\.)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(\d{4})',
+            r'(\d{1,2})/(\d{1,2})/(\d{4})',
+            r'(\d{4})-(\d{2})-(\d{2})'
+        ]
+        
+        found_date = None
+        for pat in date_patterns:
+            match = re.search(pat, text, re.IGNORECASE)
+            if match:
+                groups = match.groups()
+                if len(groups) == 3:
+                    try:
+                        if groups[0].isdigit() and len(groups[0]) == 4:
+                            found_date = f"{groups[0]}-{int(groups[1]):02d}-{int(groups[2]):02d}"
+                        elif groups[0].isdigit():
+                            found_date = f"{groups[2]}-{int(groups[0]):02d}-{int(groups[1]):02d}"
+                        else:
+                            month_str = groups[0][:3].title()
+                            month_num = datetime.strptime(month_str, '%b').month
+                            found_date = f"{groups[2]}-{month_num:02d}-{int(groups[1]):02d}"
+                        break
+                    except:
+                        pass
+        
+        found_ao = None
+        for ao in locations_map.keys():
+            if ao.lower() in text.lower():
+                if not found_ao or len(ao) > len(found_ao):
+                    found_ao = ao
+                    
+        return found_date, found_ao
+
     def get_or_create_user_id(name):
         normalized_name = normalize_user(name)
         if not normalized_name:
@@ -321,7 +358,20 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         # Use first category as the Workout name to map location
         workout_name = categories[0] if categories else ''
         
-        if (not workout_name or workout_name.lower() == 'uncategorized') and weekday_name in weekday_map:
+        # Check text for explicit overrides
+        explicit_date, explicit_ao = extract_explicit_date_and_ao(title + " " + backblast[:200], locations_map)
+        
+        if explicit_date:
+            start_date = explicit_date
+            try:
+                dt = datetime.strptime(start_date, '%Y-%m-%d')
+                weekday_name = dt.strftime('%A')
+            except:
+                pass
+        
+        if explicit_ao and (not workout_name or workout_name.lower() == 'uncategorized'):
+            workout_name = explicit_ao
+        elif (not workout_name or workout_name.lower() == 'uncategorized') and weekday_name in weekday_map:
             workout_name = weekday_map[weekday_name]
             
         key = (start_date.strip(), workout_name.strip().lower() if workout_name else '')

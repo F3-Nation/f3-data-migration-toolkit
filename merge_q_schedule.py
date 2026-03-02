@@ -164,10 +164,10 @@ def main():
                     chosen_event_key = list(distinct_events.keys())[0]
                     q_found_in_chosen = False
                     
-                    for key, rows in distinct_events.items():
+                    for ek, rows in distinct_events.items():
                         for row in rows:
                             if str(row.get('user_id')) == str(q_id):
-                                chosen_event_key = key
+                                chosen_event_key = ek
                                 q_found_in_chosen = True
                                 break
                         if q_found_in_chosen:
