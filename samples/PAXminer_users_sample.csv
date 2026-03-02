@@ -1,0 +1,3 @@
+﻿"user_id","user_name","real_name","phone","email","start_date","app","json"
+U014H0SB2UC,User1,User One,"",user1@example.com,,0,"{""updated"": ""1753034832"", ""is_admin"": false, ""is_owner"": false}"
+U0151TD6Q6B,User2,User Two,"",user2@example.com,,0,"{""updated"": ""1598299614"", ""is_admin"": false, ""is_owner"": false}"
