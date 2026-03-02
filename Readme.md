@@ -27,13 +27,8 @@ Use the tools that fit your region's historical tracking methods.
 ### `output/` (The Final Generated Data)
 *This is where the scripts will drop the cleaned, formatted data ready for national integration.*
 * `output.csv`: The master backblast repository linking Dates, AOs, Qs, and PAX attendees.
-* `users_update.csv`: Cleaned data (phone/email updates) mapped to known existing F3 National users.
-* `users_insert.csv`: Brand new users discovered in your data that need to be added to the National Database.
-  - **`TMP_ID_X`** profiles: Users discovered *exclusively* from your legacy regional Google Sheets. They have known names, and often partial contact metadata, but were never added to the National DB.
-  - **`UNMATCHED_ID_X`** profiles: Absolute unaccounted stragglers discovered deep inside the WordPress XML tags or isolated legacy schedules with zero connections to the master backend OR the local legacy contact lists.
-* `users_downrange.csv`: A list of explicitly known external users imported from PAXminer Slack data (`TMP_DR_X` assigned IDs).
-* `users_conflict.csv`: A log of users whose legacy names conflict with multiple National ID profiles.
-* `users_cleanup.csv`: A log of any users whose phone numbers or email addresses have corrupted formats requiring manual review.
+* `my_users.csv`: A unified master roster of every single PAX extracted from legacy files, PAXminer, and WordPress. 
+* `my_users_output.csv`: The official output received from the National `BulkUserCreate` script containing definitive database IDs.
 * `users_alias.csv`: An audit log documenting exactly how the scripts intelligently matched your old regional aliases to actual F3 National accounts.
 
 ### `samples/` (Dummy Data Templates)
@@ -45,29 +40,22 @@ Use the tools that fit your region's historical tracking methods.
 
 ## Execution Pipeline
 
-To run the full suite, execute these scripts in the following exact order from the root directory:
+To run the full suite, execute these processes in the following exact order:
 
 #### 1. `python build_alias_map.py`
 **Purpose:** Scrapes all legacy files and WordPress XML data to find unrecognized user names. It uses intelligent algorithms (exact email, first/last name matches, and heuristic Regex scrubbing) to map these stray aliases back to authoritative users in `user_master.csv`.
-**Outputs:** 
-- `import/aliases.json`
-- `output/users_alias.csv`
 
 #### 2. `python generate_user_reports.py`
-**Purpose:** Cross-references your legacy user directories against the `user_master.csv`. It validates email addresses, formats all phone numbers to a standard `xxx-xxx-xxxx` map, and generates lists of who needs to be updated versus who is entirely new.
+**Purpose:** Cross-references your legacy user directories, WordPress Authors, and PAXminer users to dump a completely unified user base formatted strictly to the National Guidelines bulk import schema.
 **Outputs:**
-- `output/users_update.csv`
-- `output/users_insert.csv`
-- `output/users_conflict.csv`
-- `output/users_cleanup.csv`
+- `output/my_users.csv`
 
-#### 3. `python convert.py`
-**Purpose:** Parses the WordPress XML feed. Associates dates, locations, Qs, and PAX attendees into a standardized event format. Unmapped user names are assigned a fallback `UNMATCHED_ID_X` tag and their metadata is appended directly to the end of the `users_insert.csv` file.
+#### 3. Run the National `BulkUserCreate` Script
+**Purpose:** Run the official `F3-Nation/database-helpers` user creation script against your newly generated `my_users.csv` to officially insert your region's pax into the national database.
+**Command:** `python import_users.py my_users.csv`
+**Action Needed:** Move the resulting `my_users_output.csv` straight into your `output/` directory so our data conversion scripts can read the brand new database IDs!
+
+#### 4. `python convert.py` & `python merge_q_schedule.py`
+**Purpose:** Parses the WordPress XML feed and the legacy Q schedule array. Both scripts pull directly from the `my_users_output.csv` ID mappings you just acquired to ensure every single attendance record points to a fully valid integer ID. No stragglers left behind!
 **Outputs:**
 - `output/output.csv`
-
-#### 4. `python merge_q_schedule.py`
-**Purpose:** Reads your legacy Q schedule spreadsheet. It checks if the scheduled Q successfully posted a backblast (found in `output.csv`). If they didn't, it generates a "No Backblast" placeholder event to ensure they retain Q credit for that day. Any newly discovered unmatched users are appended to `users_insert.csv`.
-**Outputs:**
-- Appends to `output/output.csv`
-- Appends to `output/users_insert.csv`

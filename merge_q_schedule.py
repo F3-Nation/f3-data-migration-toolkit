@@ -36,40 +36,9 @@ def get_or_create_user_id(name, user_id_map, canonical_id_map):
         return '', user_id_map
         
     if normalized_name in canonical_id_map:
-        # We found a canonical match!
-        user_id_map[normalized_name] = canonical_id_map[normalized_name]
         return canonical_id_map[normalized_name], user_id_map
         
-    if normalized_name not in user_id_map:
-        # Determine the next highest UNMATCHED_ID_X string
-        next_id = 1
-        for v in user_id_map.values():
-            if str(v).startswith("UNMATCHED_ID_"):
-                try:
-                    num = int(v.split("_")[-1])
-                    if num >= next_id:
-                        next_id = num + 1
-                except:
-                    pass
-        fallback_id = f"UNMATCHED_ID_{next_id}"
-        user_id_map[normalized_name] = fallback_id
-        
-        # We also need to add them to a global extraction list
-        if 'unmatched_users_data' not in globals():
-            global unmatched_users_data
-            unmatched_users_data = {}
-            
-        unmatched_users_data[fallback_id] = {
-            'id': fallback_id,
-            'f3_name': name,
-            'login': normalized_name,
-            'first_name': '[NULL]',
-            'last_name': '[NULL]',
-            'email': '[NULL]',
-            'display_name': '[NULL]'
-        }
-        
-    return user_id_map[normalized_name], user_id_map
+    return f"UNKNOWN_{normalized_name}", user_id_map
 
 def load_locations(locations_csv):
     locations = {}
@@ -103,24 +72,14 @@ def main():
     # Load Canonical maps to ensure accurate alignment
     canonical_id_map = {}
     try:
-        with open('import/user_master.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
+        with open('output/my_users_output.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
             for row in csv.DictReader(f):
                 fname = normalize_user(row.get('f3_name', ''))
                 uid = row.get('id', '')
                 if fname and uid:
                     canonical_id_map[fname] = uid
     except Exception as e:
-        pass
-        
-    try:
-        with open('output/users_insert.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
-            for row in csv.DictReader(f):
-                fname = normalize_user(row.get('f3_name', ''))
-                uid = row.get('id', '')
-                if fname and uid:
-                    canonical_id_map[fname] = uid
-    except Exception as e:
-        pass
+        print(f"Warning: Failed to load output/my_users_output.csv. ID mappings will be missing! {e}")
 
     # Load locations
     locations = load_locations('import/locations.csv')
@@ -284,42 +243,7 @@ def main():
     print(f" - Q Roles successfully mapped: {qs_assigned}")
     print(f" - 'No Backblast' placeholders generated from schedule: {missing_events_generated}")
 
-    # If new unidentified stragglers were discovered during merge, append them to users_insert.csv
-    if 'unmatched_users_data' in globals() and unmatched_users_data:
-        insert_file = 'output/users_insert.csv'
-        file_exists = os.path.exists(insert_file)
-        
-        # Read existing to prevent duplicates
-        existing_ids = set()
-        if file_exists:
-            with open(insert_file, 'r', encoding='utf-8') as f:
-                for row in csv.DictReader(f):
-                    existing_ids.add(row.get('id', ''))
-                    
-        with open(insert_file, 'a', newline='', encoding='utf-8') as f:
-            headers = ['id', 'f3_name', 'first_name', 'last_name', 'email', 'phone', 'emergency_contact', 'emergency_phone', 'status', 'paxminer_user_id']
-            writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
-            if not file_exists:
-                writer.writeheader()
-            
-            appended_count = 0
-            for row_id, data in unmatched_users_data.items():
-                if row_id not in existing_ids:
-                    writer.writerow({
-                        'id': data.get('id', ''),
-                        'f3_name': data.get('f3_name', ''),
-                        'first_name': data.get('first_name', '[NULL]'),
-                        'last_name': data.get('last_name', '[NULL]'),
-                        'email': data.get('email', ''),
-                        'phone': '[NULL]',
-                        'emergency_contact': '[NULL]',
-                        'emergency_phone': '[NULL]',
-                        'status': 'active',
-                        'paxminer_user_id': paxminer_slack_ids.get(data.get('login', ''), '')
-                    })
-                    appended_count += 1
-                    
-        print(f"Appended {appended_count} newly matched Q schedule items to {insert_file}")
+
 
 if __name__ == "__main__":
     main()

@@ -159,39 +159,18 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                 if disp and slack_id:
                     paxminer_slack_ids[disp] = slack_id
                     
-    # Pre-build lookup map: normalized_name -> canonical_id
+    # Pre-build lookup map: normalized_name -> database id
     canonical_id_map = {}
     
     try:
-        with open('import/user_master.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
+        with open('output/my_users_output.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
             for row in csv.DictReader(f):
                 fname = normalize_user(row.get('f3_name', ''))
                 uid = row.get('id', '')
                 if fname and uid:
                     canonical_id_map[fname] = uid
     except Exception as e:
-        print(f"Failed to load import/user_master.csv: {e}")
-        
-    try:
-        with open('output/users_insert.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
-            for row in csv.DictReader(f):
-                fname = normalize_user(row.get('f3_name', ''))
-                uid = row.get('id', '')
-                if fname and uid:
-                    canonical_id_map[fname] = uid
-    except Exception as e:
-        print(f"Failed to load output/users_insert.csv: {e}")
-        
-    try:
-        if os.path.exists('output/users_downrange.csv'):
-            with open('output/users_downrange.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
-                for row in csv.DictReader(f):
-                    fname = normalize_user(row.get('f3_name', ''))
-                    uid = row.get('id', '')
-                    if fname and uid:
-                        canonical_id_map[fname] = uid
-    except Exception as e:
-        print(f"Failed to load output/users_downrange.csv: {e}")
+        print(f"Warning: Failed to load output/my_users_output.csv. ID mappings will be missing! {e}")
 
     user_id_map = {}
     next_unmatched_id = 1
@@ -216,43 +195,14 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                 }
     
     def get_or_create_user_id(name):
-        nonlocal next_unmatched_id
         normalized_name = normalize_user(name)
         if not normalized_name:
             return ''
             
         if normalized_name in canonical_id_map:
-            # We found a canonical match!
-            user_id_map[normalized_name] = canonical_id_map[normalized_name]
             return canonical_id_map[normalized_name]
             
-        if normalized_name not in user_id_map:
-            # We have a strict unmatched straggler not located in ANY directory.
-            fallback_id = f"UNMATCHED_ID_{next_unmatched_id}"
-            user_id_map[normalized_name] = fallback_id
-            
-            # Lookup Author Info if they were a known WP Author explicitly
-            author_info = wp_authors.get(normalized_name, {})
-            
-            # Reconstruct the unrec_norm key that build_alias_map.py used for display_aliases.json
-            unrec_norm = re.sub(r'\(.*?\)', '', clean_text(name).lstrip('@')).lower().strip()
-            unrec_norm = re.sub(r'\bqic\b', '', unrec_norm)
-            unrec_norm = re.sub(r'\bfngs?\b', '', unrec_norm).strip()
-            
-            display_name = DISPLAY_ALIASES.get(unrec_norm, name)
-            
-            unmatched_users_data[fallback_id] = {
-                'id': fallback_id,
-                'f3_name': display_name,  # Exact targeted match or original requested name
-                'login': normalized_name,
-                'first_name': author_info.get('first_name', ''),
-                'last_name': author_info.get('last_name', ''),
-                'email': author_info.get('email', ''),
-                'display_name': author_info.get('display_name', '')
-            }
-            next_unmatched_id += 1
-            
-        return user_id_map[normalized_name]
+        return f"UNKNOWN_{normalized_name}"
 
     # Find all WP items
     items = root.findall('.//item')
