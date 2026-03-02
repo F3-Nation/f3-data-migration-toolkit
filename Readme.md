@@ -36,6 +36,11 @@ Use the tools that fit your region's historical tracking methods.
 * `users_cleanup.csv`: A log of any users whose phone numbers or email addresses have corrupted formats requiring manual review.
 * `users_alias.csv`: An audit log documenting exactly how the scripts intelligently matched your old regional aliases to actual F3 National accounts.
 
+### `samples/` (Dummy Data Templates)
+*This folder contains structurally accurate but anonymized examples of every possible input and output file.*
+- **`samples/input/`**: Review these files if you need to know exactly how to format your region's raw data for the scripts to successfully parse them.
+- **`samples/output/`**: An empty structure showing where the final merged data files will be placed.
+
 ---
 
 ## Execution Pipeline
