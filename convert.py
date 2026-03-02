@@ -258,6 +258,7 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
     items = root.findall('.//item')
     
     out_data = []
+    global_seen_attendances = set()
     
     # 2. Pre-process PAXminer data before iterating WP
     paxminer_events = {} # Map (Date, Workout) -> Event details
@@ -387,8 +388,12 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         
         loc_data = locations_map.get(workout_name, {})
         
-        org_id = loc_data.get('org_id', '')
-        location_id = loc_data.get('location_id', '')
+        # Look for a default fallback in the locations_map if this is uncategorized/unrecognized
+        default_org_id = next((v['org_id'] for v in locations_map.values() if v.get('org_id')), '37004')
+        default_loc_id = next((v['location_id'] for v in locations_map.values() if v.get('location_id')), '123')
+        
+        org_id = loc_data.get('org_id', '') or default_org_id
+        location_id = loc_data.get('location_id', '') or default_loc_id
         start_time = loc_data.get('start_time', '')
         
         # Collect all attending PAX (Creator is assumed to just be an attendee, tags are attendees)
@@ -414,8 +419,44 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                     pax_roles[pm_pax] = 'Q'
                 
         # If no users parsed for some reason, we might skip or record empty user. Let's strictly iterate over found PAX.
+        event_attendees = {}
         for pax_name, role in pax_roles.items():
             user_id = get_or_create_user_id(pax_name)
+            if not user_id: continue
+            
+            # If user already exists in this event, upgrade their role if this instance has a higher precedence ('Q' > 'Co-Q' > '')
+            existing_role = event_attendees.get(user_id, '')
+            if role == 'Q':
+                event_attendees[user_id] = role
+            elif role == 'Co-Q' and existing_role != 'Q':
+                event_attendees[user_id] = role
+            elif user_id not in event_attendees:
+                event_attendees[user_id] = role
+                
+        # Enforce exactly ONE Q rule
+        q_count = 0
+        for uid, role in list(event_attendees.items()):
+            if role == 'Q':
+                q_count += 1
+                if q_count > 1:
+                    event_attendees[uid] = 'Co-Q'
+                    
+        # If there are NO Qs, and there are attendees, force the first attendee to be the Q
+        if q_count == 0 and event_attendees:
+            # Prefer to make the creator the Q if possible
+            creator_id = get_or_create_user_id(creator.strip()) if creator else None
+            
+            if creator_id and creator_id in event_attendees:
+                event_attendees[creator_id] = 'Q'
+            else:
+                first_uid = list(event_attendees.keys())[0]
+                event_attendees[first_uid] = 'Q'
+                
+        for user_id, role in event_attendees.items():
+            dedup_key = (org_id, location_id, start_date, user_id)
+            if dedup_key in global_seen_attendances:
+                continue
+            global_seen_attendances.add(dedup_key)
             
             out_data.append({
                 'org_id': org_id,
@@ -446,8 +487,13 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                     break
                     
             loc_data = locations_map.get(orig_ao, {})
-            org_id = loc_data.get('org_id', '')
-            location_id = loc_data.get('location_id', '')
+            
+            # Look for a default fallback in the locations_map if this is uncategorized/unrecognized
+            default_org_id = next((v['org_id'] for v in locations_map.values() if v.get('org_id')), '37004')
+            default_loc_id = next((v['location_id'] for v in locations_map.values() if v.get('location_id')), '123')
+            
+            org_id = loc_data.get('org_id', '') or default_org_id
+            location_id = loc_data.get('location_id', '') or default_loc_id
             start_time = loc_data.get('start_time', '')
             
             pm_bb = paxminer_events[key]
@@ -455,15 +501,37 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
             
             description = pm_bb.split('\n')[0][:100] if pm_bb else "PAXminer Backblast"
             
-            if not pax_dict:
-                out_data.append({
-                    'org_id': org_id, 'location_id': location_id, 'series_id': '',
-                    'start_date': date_str, 'start_time': start_time, 'name': orig_ao,
-                    'description': description, 'backblast': pm_bb, 'user_id': '', 'post_type': ''
-                })
-            else:
+            if pax_dict:
+                event_attendees = {}
                 for pax_name, role in pax_dict.items():
                     user_id = get_or_create_user_id(pax_name)
+                    if not user_id: continue
+                    
+                    existing_role = event_attendees.get(user_id, '')
+                    if role == 'Q':
+                        event_attendees[user_id] = role
+                    elif role == 'Co-Q' and existing_role != 'Q':
+                        event_attendees[user_id] = role
+                    elif user_id not in event_attendees:
+                        event_attendees[user_id] = role
+                        
+                q_count = 0
+                for uid, role in list(event_attendees.items()):
+                    if role == 'Q':
+                        q_count += 1
+                        if q_count > 1:
+                            event_attendees[uid] = 'Co-Q'
+                            
+                if q_count == 0 and event_attendees:
+                    first_uid = list(event_attendees.keys())[0]
+                    event_attendees[first_uid] = 'Q'
+
+                for user_id, role in event_attendees.items():
+                    dedup_key = (org_id, location_id, date_str, user_id)
+                    if dedup_key in global_seen_attendances:
+                        continue
+                    global_seen_attendances.add(dedup_key)
+                    
                     out_data.append({
                         'org_id': org_id, 'location_id': location_id, 'series_id': '',
                         'start_date': date_str, 'start_time': start_time, 'name': orig_ao,
@@ -471,22 +539,88 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                     })
 
     print(f"DEBUG: Added {standalone_count} standalone events to array.")
+    
+    # -------------------------------------------------------------
+    # GLOBAL Q ENFORCEMENT & DEDUPLICATION
+    # -------------------------------------------------------------
+    # The National DB groups events by all metadata columns, not just date/AO.
+    # Each unique event MUST have exactly 1 Q.
+    grouped_events = {}
+    for row in out_data:
+        # Match import_backblasts.py key exactly: 
+        # (org_id, location_id, series_id, start_date, start_time, name, description, backblast)
+        group_key = (
+            row.get('org_id', ''),
+            row.get('location_id', ''),
+            row.get('series_id', ''),
+            row.get('start_date', ''),
+            row.get('start_time', ''),
+            row.get('name', ''),
+            row.get('description', ''),
+            row.get('backblast', '')
+        )
+        if group_key not in grouped_events:
+            grouped_events[group_key] = []
+        grouped_events[group_key].append(row)
+        
+    final_out_data = []
+    for group_key, rows in grouped_events.items():
+        if not rows: continue
+        
+        # Deduplicate users within the group, keeping the highest role ('Q' > 'Co-Q' > '')
+        user_roles = {}
+        for row in rows:
+            uid = row.get('user_id')
+            role = row.get('post_type', '')
+            if uid not in user_roles:
+                user_roles[uid] = role
+            else:
+                existing = user_roles[uid]
+                if role == 'Q':
+                    user_roles[uid] = 'Q'
+                elif role == 'Co-Q' and existing != 'Q':
+                    user_roles[uid] = 'Co-Q'
+                    
+        # Enforce exactly 1 Q per group
+        q_count = 0
+        for uid, role in list(user_roles.items()):
+            if role == 'Q':
+                q_count += 1
+                if q_count > 1:
+                    user_roles[uid] = 'Co-Q'
+                    
+        if q_count == 0 and user_roles:
+            first_uid = list(user_roles.keys())[0]
+            user_roles[first_uid] = 'Q'
+            
+        # Reconstruct exactly one row per unique user in this group
+        # We will use the metadata (name, description, etc.) from the first appearance of this user
+        user_metadata = {}
+        for row in rows:
+            uid = row.get('user_id')
+            if uid not in user_metadata:
+                user_metadata[uid] = row
+                
+        for uid, final_role in user_roles.items():
+            final_row = user_metadata[uid].copy()
+            final_row['post_type'] = final_role
+            final_out_data.append(final_row)
 
-    # Write generated data to output CSV
+    # -------------------------------------------------------------
     headers = ['org_id', 'location_id', 'series_id', 'start_date', 'start_time', 'name', 'description', 'backblast', 'user_id', 'post_type']
-    with open(output_csv, 'w', newline='', encoding='utf-8') as f:
+    with open('output/output.csv', 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=headers)
         writer.writeheader()
-        writer.writerows(out_data)
+        writer.writerows(final_out_data)
+        
+    print(f"Successfully converted data to output/output.csv ({len(final_out_data)} rows).")
 
-    print(f"Successfully converted data to {output_csv} ({len(out_data)} rows).")
-
-    # Write Unmatched Info to users_insert.csv
-    if unmatched_users_data:
+    # Save any new unmatched users to insert file
+    new_users_added = 0
+    if 'unmatched_users_data' in globals() and unmatched_users_data:
         insert_file = 'output/users_insert.csv'
         file_exists = os.path.exists(insert_file)
         
-        # Determine existing IDs to prevent massive duplicates if script reruns without wiping
         existing_ids = set()
         if file_exists:
             with open(insert_file, 'r', encoding='utf-8') as f:
@@ -513,7 +647,9 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                         'status': 'active',
                         'paxminer_user_id': paxminer_slack_ids.get(data.get('login', ''), '')
                     })
-        print(f"Appended {len(unmatched_users_data)} unmatched users to {insert_file}")
+                    new_users_added += 1
+                    
+        print(f"Appended {new_users_added} unmatched users to {insert_file}")
 
 if __name__ == "__main__":
     input_file = 'import/f3stsimons.wordpress.com.2026-02-23.000.xml'

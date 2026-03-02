@@ -188,20 +188,48 @@ def main():
                 matching_event_rows = events_by_date_and_name.get(key)
                 
                 if matching_event_rows:
-                    # The workout happened and was exported from XML
-                    # Let's see if the Q is already in the event's attendee list
-                    q_found = False
-                    for event_row in matching_event_rows:
-                        if str(event_row['user_id']) == str(q_id):
-                            event_row['post_type'] = 'Q'
-                            q_found = True
-                            qs_assigned += 1
-                            break
+                    # Group the rows matching this AO/Date by exact event metadata
+                    distinct_events = {}
+                    for row in matching_event_rows:
+                        event_key = (
+                            row.get('org_id', ''), row.get('location_id', ''), row.get('series_id', ''),
+                            row.get('start_date', ''), row.get('start_time', ''), row.get('name', ''),
+                            row.get('description', ''), row.get('backblast', '')
+                        )
+                        if event_key not in distinct_events:
+                            distinct_events[event_key] = []
+                        distinct_events[event_key].append(row)
+                        
+                    # Find which distinct event to assign the Q to
+                    # Prefer the one where the user is already an attendee
+                    chosen_event_key = list(distinct_events.keys())[0]
+                    q_found_in_chosen = False
                     
-                    # If Q is scheduled but didn't officially tag themselves in the backblast
-                    if not q_found:
-                        # Copy the first row's metadata to create a new row for the Q
-                        sample_row = matching_event_rows[0].copy()
+                    for key, rows in distinct_events.items():
+                        for row in rows:
+                            if str(row.get('user_id')) == str(q_id):
+                                chosen_event_key = key
+                                q_found_in_chosen = True
+                                break
+                        if q_found_in_chosen:
+                            break
+                            
+                    chosen_rows = distinct_events[chosen_event_key]
+                    
+                    # Demote existing Qs ONLY in the chosen event
+                    for row in chosen_rows:
+                        if row.get('post_type') == 'Q' and str(row.get('user_id')) != str(q_id):
+                            row['post_type'] = 'Co-Q'
+                            
+                    if q_found_in_chosen:
+                        for row in chosen_rows:
+                            if str(row.get('user_id')) == str(q_id):
+                                row['post_type'] = 'Q'
+                                qs_assigned += 1
+                                break
+                    else:
+                        # Copy the first row's metadata of the chosen event to create a new row for the Q
+                        sample_row = chosen_rows[0].copy()
                         sample_row['user_id'] = q_id
                         sample_row['post_type'] = 'Q'
                         events_data.append(sample_row)
@@ -212,9 +240,12 @@ def main():
                     # The workout is Scheduled but NO backblast exists at all in the XML!
                     loc_data = locations.get(workout_name, {})
                     
+                    default_org_id = next((v['orgId'] for v in locations.values() if v.get('orgId')), '37004')
+                    default_loc_id = next((v['locationId'] for v in locations.values() if v.get('locationId')), '123')
+                    
                     new_row = {
-                        'org_id': loc_data.get('orgId', ''),
-                        'location_id': loc_data.get('locationId', ''),
+                        'org_id': loc_data.get('orgId', '') or default_org_id,
+                        'location_id': loc_data.get('locationId', '') or default_loc_id,
                         'series_id': '',
                         'start_date': start_date,
                         'start_time': format_time(loc_data.get('startTime', '')),
@@ -238,7 +269,16 @@ def main():
     with open('output/output.csv', 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=headers)
         writer.writeheader()
-        writer.writerows(events_data)
+        
+        seen_rows = set()
+        deduped_events_data = []
+        for row in events_data:
+            dedup_key = (row.get('org_id'), row.get('location_id'), row.get('start_date'), row.get('user_id'))
+            if dedup_key not in seen_rows:
+                seen_rows.add(dedup_key)
+                deduped_events_data.append(row)
+                
+        writer.writerows(deduped_events_data)
         
     print(f"Merge Complete: Overwrote output/output.csv ({len(events_data)} total rows).")
     print(f" - Q Roles successfully mapped: {qs_assigned}")
