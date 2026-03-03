@@ -163,14 +163,14 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
     canonical_id_map = {}
     
     try:
-        with open('output/my_users_output.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
+        with open('import/user_master.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
             for row in csv.DictReader(f):
                 fname = normalize_user(row.get('f3_name', ''))
                 uid = row.get('id', '')
                 if fname and uid:
                     canonical_id_map[fname] = uid
     except Exception as e:
-        print(f"Warning: Failed to load output/my_users_output.csv. ID mappings will be missing! {e}")
+        print(f"Warning: Failed to load import/user_master.csv. ID mappings will be missing! {e}")
 
     user_id_map = {}
     next_unmatched_id = 1
@@ -232,6 +232,7 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         return found_date, found_ao
 
     def get_or_create_user_id(name):
+        nonlocal next_unmatched_id
         normalized_name = normalize_user(name)
         if not normalized_name:
             return ''
@@ -239,7 +240,26 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         if normalized_name in canonical_id_map:
             return canonical_id_map[normalized_name]
             
-        return f"UNKNOWN_{normalized_name}"
+        if normalized_name in user_id_map:
+            return user_id_map[normalized_name]
+            
+        # Create a new TMP_ID
+        new_id = f"TMP_ID_{next_unmatched_id}"
+        next_unmatched_id += 1
+        user_id_map[normalized_name] = new_id
+        
+        # Try to pull email from WP metadata
+        email_addr = ''
+        if normalized_name in wp_authors:
+            email_addr = wp_authors[normalized_name].get('email', '')
+            
+        unmatched_users_data[new_id] = {
+            'id': new_id,
+            'f3_name': name.strip(),
+            'email': email_addr
+        }
+        
+        return new_id
 
     # Find all WP items
     items = root.findall('.//item')
@@ -477,8 +497,8 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
 
     # Save any new unmatched users to insert file
     new_users_added = 0
-    if 'unmatched_users_data' in globals() and unmatched_users_data:
-        insert_file = 'output/users_insert.csv'
+    if 'unmatched_users_data' in globals() or unmatched_users_data:
+        insert_file = 'output/missing_users.csv'
         file_exists = os.path.exists(insert_file)
         
         existing_ids = set()
@@ -488,7 +508,7 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                     existing_ids.add(row.get('id', ''))
                     
         with open(insert_file, 'a', newline='', encoding='utf-8') as f:
-            headers = ['id', 'f3_name', 'first_name', 'last_name', 'email', 'phone', 'emergency_contact', 'emergency_phone', 'status', 'paxminer_user_id']
+            headers = ['id', 'f3_name', 'email']
             writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
             if not file_exists:
                 writer.writeheader()
@@ -498,18 +518,11 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                     writer.writerow({
                         'id': data.get('id', ''),
                         'f3_name': data.get('f3_name', ''),
-                        'first_name': data.get('first_name', '[NULL]'),
-                        'last_name': data.get('last_name', '[NULL]'),
-                        'email': data.get('email', ''),
-                        'phone': '[NULL]',
-                        'emergency_contact': '[NULL]',
-                        'emergency_phone': '[NULL]',
-                        'status': 'active',
-                        'paxminer_user_id': paxminer_slack_ids.get(data.get('login', ''), '')
+                        'email': data.get('email', '')
                     })
                     new_users_added += 1
                     
-        print(f"Appended {new_users_added} unmatched users to {insert_file}")
+        print(f"Appended {new_users_added} missing users to {insert_file}")
 
 if __name__ == "__main__":
     input_file = 'import/f3stsimons.wordpress.com.2026-02-23.000.xml'

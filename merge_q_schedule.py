@@ -30,15 +30,29 @@ def normalize_user(name):
         return USER_ALIASES[lowercased]
     return lowercased
 
-def get_or_create_user_id(name, user_id_map, canonical_id_map):
+def get_or_create_user_id(name, user_id_map, canonical_id_map, unmatched_users_data, next_unmatched_id):
     normalized_name = normalize_user(name)
     if not normalized_name:
-        return '', user_id_map
+        return '', user_id_map, unmatched_users_data, next_unmatched_id
         
     if normalized_name in canonical_id_map:
-        return canonical_id_map[normalized_name], user_id_map
+        return canonical_id_map[normalized_name], user_id_map, unmatched_users_data, next_unmatched_id
         
-    return f"UNKNOWN_{normalized_name}", user_id_map
+    if normalized_name in user_id_map:
+        return user_id_map[normalized_name], user_id_map, unmatched_users_data, next_unmatched_id
+        
+    # Create a new TMP_ID
+    new_id = f"TMP_ID_{next_unmatched_id}"
+    next_unmatched_id += 1
+    user_id_map[normalized_name] = new_id
+    
+    unmatched_users_data[new_id] = {
+        'id': new_id,
+        'f3_name': name.strip(),
+        'email': ''
+    }
+    
+    return new_id, user_id_map, unmatched_users_data, next_unmatched_id
 
 def load_locations(locations_csv):
     locations = {}
@@ -72,14 +86,20 @@ def main():
     # Load Canonical maps to ensure accurate alignment
     canonical_id_map = {}
     try:
-        with open('output/my_users_output.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
+        with open('import/user_master.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
             for row in csv.DictReader(f):
                 fname = normalize_user(row.get('f3_name', ''))
                 uid = row.get('id', '')
                 if fname and uid:
                     canonical_id_map[fname] = uid
     except Exception as e:
-        print(f"Warning: Failed to load output/my_users_output.csv. ID mappings will be missing! {e}")
+        print(f"Warning: Failed to load import/user_master.csv. ID mappings will be missing! {e}")
+        
+    # Initialize Unmatched ID tracking for merge script
+    # To prevent TMP_ID_X conflicts across scripts, assume convert.py used a chunk and start higher, 
+    # or rely on the dict to hold just newly discovered names.
+    next_unmatched_id = 5000 
+    unmatched_users_data = {}
 
     # Load locations
     locations = load_locations('import/locations.csv')
@@ -141,7 +161,9 @@ def main():
                 if not workout_name or not q_name:
                     continue
                     
-                q_id, user_id_map = get_or_create_user_id(q_name, user_id_map, canonical_id_map)
+                q_id, user_id_map, unmatched_users_data, next_unmatched_id = get_or_create_user_id(
+                    q_name, user_id_map, canonical_id_map, unmatched_users_data, next_unmatched_id
+                )
 
                 key = (start_date, workout_name.lower())
                 matching_event_rows = events_by_date_and_name.get(key)
@@ -242,6 +264,35 @@ def main():
     print(f"Merge Complete: Overwrote output/output.csv ({len(events_data)} total rows).")
     print(f" - Q Roles successfully mapped: {qs_assigned}")
     print(f" - 'No Backblast' placeholders generated from schedule: {missing_events_generated}")
+
+    # Append any brand new unmatched users discovered in the schedule
+    new_users_added = 0
+    if unmatched_users_data:
+        insert_file = 'output/missing_users.csv'
+        file_exists = os.path.exists(insert_file)
+        
+        existing_ids = set()
+        if file_exists:
+            with open(insert_file, 'r', encoding='utf-8') as f:
+                for row in csv.DictReader(f):
+                    existing_ids.add(row.get('id', ''))
+                    
+        with open(insert_file, 'a', newline='', encoding='utf-8') as f:
+            headers = ['id', 'f3_name', 'email']
+            writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
+            if not file_exists:
+                writer.writeheader()
+                
+            for row_id, data in unmatched_users_data.items():
+                if row_id not in existing_ids:
+                    writer.writerow({
+                        'id': data.get('id', ''),
+                        'f3_name': data.get('f3_name', ''),
+                        'email': data.get('email', '')
+                    })
+                    new_users_added += 1
+                    
+        print(f"Appended {new_users_added} missing scheduled Qs to {insert_file}")
 
 
 
