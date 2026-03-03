@@ -273,7 +273,10 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         if post_type != 'post':
             continue
             
-        title = clean_text(item.findtext('title') or '')
+        title_raw = item.findtext('title') or ''
+        title = clean_text(title_raw).replace('\r', ' ').replace('\n', ' ')
+        title = ' '.join(title.split()) # collapse whitespace
+
         status = item.findtext('wp:status', namespaces=ns)
         
         # Parse Dates
@@ -307,6 +310,10 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         # Parse Backblast content
         raw_content = item.findtext('content:encoded', namespaces=ns)
         backblast = clean_text(html_to_text(raw_content))
+        
+        # Heuristic to detect if the author pasted the whole post into the title box
+        if len(title) > 100 and len(backblast) < 50:
+            backblast = title
         
         # Categories and Tags
         categories = []
@@ -412,7 +419,7 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                 'start_date': start_date,
                 'start_time': start_time,
                 'name': workout_name, # Defaults to workout name or AO name
-                'description': title, # Will use Title for description
+                'description': f"{workout_name} Backblast".strip() if len(title) > 100 else title,
                 'backblast': backblast,
                 'user_id': user_id,
                 'post_type': role
