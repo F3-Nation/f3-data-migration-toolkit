@@ -247,61 +247,6 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
     out_data = []
     global_seen_attendances = set()
     
-    # 2. Pre-process PAXminer data before iterating WP
-    paxminer_events = {} # Map (Date, Workout) -> Event details
-    paxminer_attendance = {} # Map (Date, Workout) -> List of PAX with roles
-    
-    pm_att_files = glob.glob('import/PAXminer_attendance_view_*.csv')
-    if pm_att_files:
-        latest_att = max(pm_att_files, key=os.path.getctime)
-        with open(latest_att, 'r', encoding='utf-8-sig', errors='ignore') as f:
-            for row in csv.DictReader(f):
-                date = row.get('Date', '').strip()
-                ao = row.get('AO', '').strip() # e.g. "1stf"
-                pax = row.get('PAX', '').strip()
-                q = row.get('Q', '').strip()
-                
-                if not date: continue
-                # Determine "canonical" AO from PAXminer's generic AO using the weekday_map
-                try:
-                    dt = datetime.strptime(date, '%Y-%m-%d')
-                    weekday_name = dt.strftime('%A')
-                    canonical_ao = weekday_map.get(weekday_name, ao)
-                except:
-                    canonical_ao = ao
-                    
-                # To ensure strict matching against WP data, lowercase the canonical_ao
-                key = (date.strip(), canonical_ao.strip().lower() if canonical_ao else '')
-                role = 'Q' if pax.lower() == q.lower() else ''
-                
-                if key not in paxminer_attendance:
-                    paxminer_attendance[key] = {}
-                paxminer_attendance[key][pax] = role
-
-    pm_bb_files = glob.glob('import/PAXminer_backblast_*.csv')
-    if pm_bb_files:
-        latest_bb = max(pm_bb_files, key=os.path.getctime)
-        with open(latest_bb, 'r', encoding='utf-8-sig', errors='ignore') as f:
-            for row in csv.DictReader(f):
-                date = row.get('Date', '').strip()
-                ao = row.get('AO', '').strip()
-                bb = clean_text(row.get('backblast', ''))
-                
-                if not date: continue
-                
-                try:
-                    dt = datetime.strptime(date, '%Y-%m-%d')
-                    weekday_name = dt.strftime('%A')
-                    canonical_ao = weekday_map.get(weekday_name, ao)
-                except:
-                    canonical_ao = ao
-                    
-                key = (date.strip(), canonical_ao.strip().lower() if canonical_ao else '')
-                paxminer_events[key] = bb
-
-    # Keep track of which PAXminer events we've merged into WP so we can append the remainder
-    merged_pm_keys = set()
-    
     for item in items:
         post_type = item.findtext('wp:post_type', namespaces=ns)
         # Skip attachments, pages, nav_menu_items, etc. We only want posts.
@@ -376,16 +321,6 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
             
         key = (start_date.strip(), workout_name.strip().lower() if workout_name else '')
         
-        # Merge PAXminer Backblast if it exists
-        if key in paxminer_events:
-            pm_bb = paxminer_events[key]
-            # Verify the texts aren't exact replicas before appending blindly
-            if backblast and pm_bb and backblast.strip() != pm_bb.strip():
-                backblast = f"--- PAXminer Backblast ---\n{pm_bb.strip()}\n\n--- WordPress Backblast ---\n{backblast.strip()}"
-            elif pm_bb and not backblast:
-                backblast = pm_bb
-            merged_pm_keys.add(key)
-        
         loc_data = locations_map.get(workout_name, {})
         
         # Look for a default fallback in the locations_map if this is uncategorized/unrecognized
@@ -409,15 +344,7 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
             if tag_name and tag_name not in pax_roles:
                 pax_roles[tag_name] = ''
                 
-        # Merge PAXminer Attendees if they exist
-        if key in paxminer_attendance:
-            pm_pax_dict = paxminer_attendance[key]
-            for pm_pax, pm_role in pm_pax_dict.items():
-                if pm_pax and pm_pax not in pax_roles:
-                    pax_roles[pm_pax] = pm_role
-                elif pm_pax and pm_role == 'Q': # Override if PM says they were Q
-                    pax_roles[pm_pax] = 'Q'
-                
+
         # If no users parsed for some reason, we might skip or record empty user. Let's strictly iterate over found PAX.
         event_attendees = {}
         for pax_name, role in pax_roles.items():
@@ -471,74 +398,7 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                 'post_type': role
             })
 
-    # Now add the remaining standalone PAXminer events
-    print(f"DEBUG: Total PAXminer events: {len(paxminer_events)}")
-    print(f"DEBUG: Total Merged PM keys: {len(merged_pm_keys)}")
-    standalone_count = 0
-    for key in paxminer_events:
-        if key not in merged_pm_keys:
-            standalone_count += 1
-            date_str, canonical_ao_lower = key
-            
-            orig_ao = canonical_ao_lower.title()
-            for k, v in locations_map.items():
-                if k.lower() == canonical_ao_lower:
-                    orig_ao = k
-                    break
-                    
-            loc_data = locations_map.get(orig_ao, {})
-            
-            # Look for a default fallback in the locations_map if this is uncategorized/unrecognized
-            default_org_id = next((v['org_id'] for v in locations_map.values() if v.get('org_id')), '37004')
-            default_loc_id = next((v['location_id'] for v in locations_map.values() if v.get('location_id')), '123')
-            
-            org_id = loc_data.get('org_id', '') or default_org_id
-            location_id = loc_data.get('location_id', '') or default_loc_id
-            start_time = loc_data.get('start_time', '')
-            
-            pm_bb = paxminer_events[key]
-            pax_dict = paxminer_attendance.get(key, {})
-            
-            description = pm_bb.split('\n')[0][:100] if pm_bb else "PAXminer Backblast"
-            
-            if pax_dict:
-                event_attendees = {}
-                for pax_name, role in pax_dict.items():
-                    user_id = get_or_create_user_id(pax_name)
-                    if not user_id: continue
-                    
-                    existing_role = event_attendees.get(user_id, '')
-                    if role == 'Q':
-                        event_attendees[user_id] = role
-                    elif role == 'Co-Q' and existing_role != 'Q':
-                        event_attendees[user_id] = role
-                    elif user_id not in event_attendees:
-                        event_attendees[user_id] = role
-                        
-                q_count = 0
-                for uid, role in list(event_attendees.items()):
-                    if role == 'Q':
-                        q_count += 1
-                        if q_count > 1:
-                            event_attendees[uid] = 'Co-Q'
-                            
-                if q_count == 0 and event_attendees:
-                    first_uid = list(event_attendees.keys())[0]
-                    event_attendees[first_uid] = 'Q'
 
-                for user_id, role in event_attendees.items():
-                    dedup_key = (org_id, location_id, date_str, user_id)
-                    if dedup_key in global_seen_attendances:
-                        continue
-                    global_seen_attendances.add(dedup_key)
-                    
-                    out_data.append({
-                        'org_id': org_id, 'location_id': location_id, 'series_id': '',
-                        'start_date': date_str, 'start_time': start_time, 'name': orig_ao,
-                        'description': description, 'backblast': pm_bb, 'user_id': user_id, 'post_type': role
-                    })
-
-    print(f"DEBUG: Added {standalone_count} standalone events to array.")
     
     # -------------------------------------------------------------
     # GLOBAL Q ENFORCEMENT & DEDUPLICATION
