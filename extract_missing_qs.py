@@ -132,17 +132,37 @@ def main():
     if bq_result_files:
         with open(bq_result_files[0], 'r', encoding='utf-8-sig', errors='ignore') as f:
             for row in csv.DictReader(f):
-                # The bq-results format varies, but usually has 'date' or 'start_date' and 'ao_name' or similar, we must crossref location_id possibly.
-                # Since we want to be safe, if we know WP backblasts + PAXminer is in here:
                 date = row.get('date', '').strip()
                 if not date:
                     date = row.get('start_date', '').strip()
-                # Instead of matching by name, map to location_id
                 loc_id = row.get('location_id', '').strip()
                 if date and loc_id:
                     existing_events.add((date, loc_id))
                     
-    # 2. WordPress data we just generated
+    # 2. PAXminer Attendance and Backblasts (Local copies)
+    for pm_pattern in ['import/PAXminer_attendance_view_*.csv', 'import/PAXminer_backblast_*.csv']:
+        pm_files = glob.glob(pm_pattern)
+        for pm_file in pm_files:
+            try:
+                with open(pm_file, 'r', encoding='utf-8-sig', errors='ignore') as f:
+                    for row in csv.DictReader(f):
+                        date = row.get('Date', '').strip()
+                        ao_name = row.get('AO', '').strip()
+                        
+                        # Map AO name to location_id if possible
+                        loc_id = ''
+                        if ao_name in locations_map:
+                            loc_id = locations_map[ao_name].get('location_id', '')
+                        elif ao_name.lower() == '1stf':
+                            # In this region, '1stf' often defaults to Sailor's Warning/Jailbreak location
+                            loc_id = '34588'
+                            
+                        if date and loc_id:
+                            existing_events.add((date, loc_id))
+            except Exception as e:
+                print(f"Warning: Failed to load {pm_file}. {e}")
+                    
+    # 3. WordPress data we just generated
     wp_file = f"output/{config.REGION_NAME}_wordpress_backblasts.csv"
     if os.path.exists(wp_file):
         with open(wp_file, 'r', encoding='utf-8') as f:
