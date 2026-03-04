@@ -85,6 +85,24 @@ def main():
     except Exception as e:
         print(f"Warning: Failed to load user_master.csv. {e}")
         
+    # Load newly assigned IDs from bulk update output if it exists
+    missing_output_file = f"import/{config.REGION_NAME}_missing_users_output.csv"
+    if os.path.exists(missing_output_file):
+        try:
+            with open(missing_output_file, 'r', encoding='utf-8-sig', errors='ignore') as f:
+                for row in csv.DictReader(f):
+                    uid = row.get('id', '').replace(',', '')
+                    fname = normalize_user(row.get('f3_name', ''))
+                    email = row.get('email', '').strip().lower()
+                    if uid:
+                        if fname:
+                            canonical_id_map[fname] = uid
+                        if email and email != '[null]':
+                            email_to_id_map[email] = uid
+            print(f"Loaded newly assigned IDs from {missing_output_file}")
+        except Exception as e:
+            print(f"Warning: Failed to load {missing_output_file}. {e}")
+            
     # Load legacy emails
     legacy_emails = {}
     for legacy_file in ['import/legacy_pax_directory.csv', 'import/legacy_master_directory.csv']:
