@@ -119,7 +119,8 @@ def main():
                 
     # Source counters for the overview report
     stats = {
-        'wp_events': 0,
+        'wp_attendance': 0,
+        'wp_backblasts': 0,
         'paxminer_attendance': 0,
         'paxminer_backblasts': 0,
         'bq_results': 0,
@@ -196,7 +197,9 @@ def main():
                 loc_id = row.get('location_id', '').strip()
                 if date and loc_id:
                     existing_events.add((date, loc_id))
-                    stats['wp_events'] += 1
+                    stats['wp_attendance'] += 1
+                    if row.get('post_type') == 'Q':
+                        stats['wp_backblasts'] += 1
 
     missing_backblast_events = []
     non_workout_events = []
@@ -321,13 +324,12 @@ def main():
         f.write(f"**Generated:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         
         f.write("## Source Data Counts\n")
-        f.write("| Source | Count |\n")
-        f.write("| :--- | :--- |\n")
-        f.write(f"| WordPress Backblasts | {stats['wp_events']} |\n")
-        f.write(f"| PAXminer Attendance | {stats['paxminer_attendance']} |\n")
-        f.write(f"| PAXminer Backblasts | {stats['paxminer_backblasts']} |\n")
-        f.write(f"| National DB results (BQ) | {stats['bq_results']} |\n")
-        f.write(f"| **Total Unique Processed Events** | {len(existing_events)} |\n\n")
+        f.write("| Source | Attendance Rows | Unique Backblasts |\n")
+        f.write("| :--- | :--- | :--- |\n")
+        f.write(f"| WordPress Export | {stats['wp_attendance']} | {stats['wp_backblasts']} |\n")
+        f.write(f"| PAXminer Export | {stats['paxminer_attendance']} | {stats['paxminer_backblasts']} |\n")
+        f.write(f"| National DB results (BQ) | - | {stats['bq_results']} |\n")
+        f.write(f"| **Total Unique Backblasts (Loaded)** | - | **{len(existing_events)}** |\n\n")
         
         f.write("## Legacy Q Schedule Analysis\n")
         f.write("| Category | Count |\n")
