@@ -149,14 +149,22 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                 groups = match.groups()
                 if len(groups) == 3:
                     try:
+                        year_val = 0
                         if groups[0].isdigit() and len(groups[0]) == 4:
+                            year_val = int(groups[0])
                             found_date = f"{groups[0]}-{int(groups[1]):02d}-{int(groups[2]):02d}"
                         elif groups[0].isdigit():
+                            year_val = int(groups[2])
                             found_date = f"{groups[2]}-{int(groups[0]):02d}-{int(groups[1]):02d}"
                         else:
+                            year_val = int(groups[2])
                             month_str = groups[0][:3].title()
                             month_num = datetime.strptime(month_str, '%b').month
                             found_date = f"{groups[2]}-{month_num:02d}-{int(groups[1]):02d}"
+                        
+                        # F3 Safeguard: Ignore historical dates before F3 founded (2011)
+                        if year_val < 2011:
+                            return None, None
                         break
                     except:
                         pass
