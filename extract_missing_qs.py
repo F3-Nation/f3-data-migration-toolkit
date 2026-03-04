@@ -12,16 +12,16 @@ USER_ALIASES, _ = utils.load_aliases()
 def normalize_user(name):
     return utils.normalize_user(name, USER_ALIASES)
 
-def get_or_create_user_id(name, user_id_map, canonical_id_map, unmatched_qs_data, paxminer_unmatched_data, next_unmatched_id, legacy_emails, email_to_id_map, paxminer_slack_ids):
+def get_or_create_user_id(name, user_id_map, canonical_id_map, unmatched_qs_data, next_unmatched_id, legacy_emails, email_to_id_map):
     normalized_name = normalize_user(name)
     if not normalized_name:
-        return '', user_id_map, unmatched_qs_data, paxminer_unmatched_data, next_unmatched_id
+        return '', user_id_map, unmatched_qs_data, next_unmatched_id
         
     if normalized_name in canonical_id_map:
-        return canonical_id_map[normalized_name], user_id_map, unmatched_qs_data, paxminer_unmatched_data, next_unmatched_id
+        return canonical_id_map[normalized_name], user_id_map, unmatched_qs_data, next_unmatched_id
         
     if normalized_name in user_id_map:
-        return user_id_map[normalized_name], user_id_map, unmatched_qs_data, paxminer_unmatched_data, next_unmatched_id
+        return user_id_map[normalized_name], user_id_map, unmatched_qs_data, next_unmatched_id
         
     email_addr = ''
     if normalized_name in legacy_emails:
@@ -29,42 +29,25 @@ def get_or_create_user_id(name, user_id_map, canonical_id_map, unmatched_qs_data
         
     if email_addr and email_addr.lower() in email_to_id_map:
         canonical_id_map[normalized_name] = email_to_id_map[email_addr.lower()]
-        return email_to_id_map[email_addr.lower()], user_id_map, unmatched_qs_data, paxminer_unmatched_data, next_unmatched_id
+        return email_to_id_map[email_addr.lower()], user_id_map, unmatched_qs_data, next_unmatched_id
         
     # Create a new TMPQ_ID
     new_id = f"TMPQ_ID_{next_unmatched_id}"
     next_unmatched_id += 1
     user_id_map[normalized_name] = new_id
     
-    if normalized_name in paxminer_slack_ids:
-        paxminer_unmatched_data[new_id] = {
-            'slack_id': paxminer_slack_ids[normalized_name],
-            'f3_name': name.strip(),
-            'email': email_addr
-        }
-    else:
-        unmatched_qs_data[new_id] = {
-            'id': new_id,
-            'f3_name': name.strip(),
-            'email': email_addr
-        }
+    unmatched_qs_data[new_id] = {
+        'id': new_id,
+        'f3_name': name.strip(),
+        'email': email_addr
+    }
     
-    return new_id, user_id_map, unmatched_qs_data, paxminer_unmatched_data, next_unmatched_id
+    return new_id, user_id_map, unmatched_qs_data, next_unmatched_id
 
 def load_locations(locations_csv):
     return utils.load_locations(locations_csv)
 
 def main():
-    paxminer_slack_ids = {}
-    pm_user_files = glob.glob('import/PAXminer_users_*.csv')
-    if pm_user_files:
-        with open(pm_user_files[0], 'r', encoding='utf-8-sig', errors='ignore') as f:
-            for row in csv.DictReader(f):
-                disp = normalize_user(row.get('user_name', ''))
-                slack_id = row.get('user_id', '').strip()
-                if disp and slack_id:
-                    paxminer_slack_ids[disp] = slack_id
-                    
     # Load canonical ids from bq-users
     canonical_id_map = {}
     try:
@@ -90,8 +73,15 @@ def main():
             for row in csv.DictReader(f):
                 uid = row.get('id', '').replace(',', '')
                 email = row.get('email', '').strip().lower()
-                if uid and email and email != '[null]':
-                    email_to_id_map[email] = uid
+                fname = normalize_user(row.get('f3_name', ''))
+                
+                if uid:
+                    if email and email != '[null]':
+                        email_to_id_map[email] = uid
+                    if fname:
+                        # Only overwrite if not already set by bq-users (which filters for region)
+                        if fname not in canonical_id_map:
+                            canonical_id_map[fname] = uid
     except Exception as e:
         print(f"Warning: Failed to load user_master.csv. {e}")
         
@@ -113,7 +103,6 @@ def main():
     user_id_map = {}
     next_unmatched_id = 1
     unmatched_qs_data = {}
-    paxminer_unmatched_data = {}
 
     locations_map, _ = utils.load_locations('import/locations.csv')
 
@@ -174,8 +163,8 @@ def main():
                 # Check if this date+loc_id combination exists in our known backblasts
                 if (start_date, loc_id) not in existing_events:
                     # It's missing! Get the Q's ID
-                    q_id, user_id_map, unmatched_qs_data, paxminer_unmatched_data, next_unmatched_id = get_or_create_user_id(
-                        q_name, user_id_map, canonical_id_map, unmatched_qs_data, paxminer_unmatched_data, next_unmatched_id, legacy_emails, email_to_id_map, paxminer_slack_ids
+                    q_id, user_id_map, unmatched_qs_data, next_unmatched_id = get_or_create_user_id(
+                        q_name, user_id_map, canonical_id_map, unmatched_qs_data, next_unmatched_id, legacy_emails, email_to_id_map
                     )
                     
                     default_org_id = next((v['org_id'] for v in locations_map.values() if v.get('org_id')), '37004')
@@ -236,26 +225,6 @@ def main():
         if os.path.exists(missing_qs_file):
             os.remove(missing_qs_file)
             
-    # Write paxminer_unmatched_data (Slack IDs without national IDs)
-    pax_unmatched_file = f"output/{config.REGION_NAME}_paxminer_unmatched.csv"
-    pax_users_added = 0
-    if paxminer_unmatched_data:
-        file_exists = os.path.exists(pax_unmatched_file)
-        with open(pax_unmatched_file, 'a', newline='', encoding='utf-8') as f:
-            headers = ['slack_id', 'f3_name', 'email']
-            writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
-            if not file_exists:
-                writer.writeheader()
-                
-            for row_id, data in paxminer_unmatched_data.items():
-                writer.writerow({
-                    'slack_id': data.get('slack_id', ''),
-                    'f3_name': data.get('f3_name', ''),
-                    'email': data.get('email', '')
-                })
-                pax_users_added += 1
-                
-        print(f"Generated {pax_users_added} missing paxminer users to {pax_unmatched_file}")
             
 if __name__ == "__main__":
     main()

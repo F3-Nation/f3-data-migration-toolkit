@@ -28,16 +28,6 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
 
     locations_map, weekday_map = utils.load_locations(locations_csv)
     
-    paxminer_slack_ids = {}
-    pm_user_files = glob.glob('import/PAXminer_users_*.csv')
-    if pm_user_files:
-        with open(pm_user_files[0], 'r', encoding='utf-8-sig', errors='ignore') as f:
-            for row in csv.DictReader(f):
-                disp = normalize_user(row.get('user_name', ''))
-                slack_id = row.get('user_id', '').strip()
-                if disp and slack_id:
-                    paxminer_slack_ids[disp] = slack_id
-                    
     # Pre-build lookup map: normalized_name -> database id
     canonical_id_map = {}
     
@@ -65,8 +55,15 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
             for row in csv.DictReader(f):
                 uid = row.get('id', '').replace(',', '')
                 email = row.get('email', '').strip().lower()
-                if uid and email and email != '[null]':
-                    email_to_id_map[email] = uid
+                fname = normalize_user(row.get('f3_name', ''))
+                
+                if uid:
+                    if email and email != '[null]':
+                        email_to_id_map[email] = uid
+                    if fname:
+                        # Only overwrite if not already set by bq-users (which filters for region)
+                        if fname not in canonical_id_map:
+                            canonical_id_map[fname] = uid
     except Exception as e:
         print(f"Warning: Failed to load user_master.csv. {e}")
         
@@ -86,15 +83,9 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
     user_id_map = {}
     next_unmatched_id = 1
     unmatched_users_data = {}  # Store unmatched users to write out later
-    paxminer_unmatched_data = {} # Store users with slack IDs that are unmatched
-    
     missing_users_file = f"output/{config.REGION_NAME}_missing_users.csv"
     if os.path.exists(missing_users_file):
         os.remove(missing_users_file)
-        
-    pax_unmatched_file = f"output/{config.REGION_NAME}_paxminer_unmatched.csv"
-    if os.path.exists(pax_unmatched_file):
-        os.remove(pax_unmatched_file)
     
     # 1. First Pass: Cache WP Author Metadata so we know who is who if they go unmatched
     wp_authors = {}
@@ -190,18 +181,11 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         next_unmatched_id += 1
         user_id_map[normalized_name] = new_id
             
-        if normalized_name in paxminer_slack_ids:
-            paxminer_unmatched_data[new_id] = {
-                'slack_id': paxminer_slack_ids[normalized_name],
-                'f3_name': name.strip(),
-                'email': email_addr
-            }
-        else:
-            unmatched_users_data[new_id] = {
-                'id': new_id,
-                'f3_name': name.strip(),
-                'email': email_addr
-            }
+        unmatched_users_data[new_id] = {
+            'id': new_id,
+            'f3_name': name.strip(),
+            'email': email_addr
+        }
         
         return new_id
 
@@ -473,26 +457,6 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                     new_users_added += 1
                     
         print(f"Appended {new_users_added} missing users to {missing_users_file}")
-
-    # Save any slack paxminer unmatched
-    pax_users_added = 0
-    if paxminer_unmatched_data:
-        file_exists = os.path.exists(pax_unmatched_file)
-        with open(pax_unmatched_file, 'a', newline='', encoding='utf-8') as f:
-            headers = ['slack_id', 'f3_name', 'email']
-            writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
-            if not file_exists:
-                writer.writeheader()
-                
-            for row_id, data in paxminer_unmatched_data.items():
-                writer.writerow({
-                    'slack_id': data.get('slack_id', ''),
-                    'f3_name': data.get('f3_name', ''),
-                    'email': data.get('email', '')
-                })
-                pax_users_added += 1
-                
-        print(f"Generated {pax_users_added} missing paxminer users to {pax_unmatched_file}")
 
 if __name__ == "__main__":
     # Dynamic XML detection

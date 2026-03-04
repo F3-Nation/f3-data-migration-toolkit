@@ -26,11 +26,6 @@ Check the `{REGION_NAME}_missing_users.csv` output.
 - If this list is long, the region may have missed alias mappings.
 - Encourage them to update `import/aliases.json` to reduce unmatched users.
 
-### Slack ID Reconciliation
-Check the `{REGION_NAME}_paxminer_unmatched.csv` output.
-- These are users found in PAXminer who have a Slack ID but don't yet have a National User ID.
-- These should be used to create new accounts or update existing ones before the backblast import.
-
 ### Comma-Free Compliance
 The scripts automatically strip commas from IDs to ensure strict integer alignment. Verify that `user_id`, `org_id`, and `location_id` columns contains only raw numbers.
 
