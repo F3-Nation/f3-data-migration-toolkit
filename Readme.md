@@ -1,5 +1,7 @@
 # F3 Region Data Integrator
 
+> **F3 National Administrators**: Please refer to the [National Administrator Guide](NationalAdminGuide.md) for security and coordination best practices.
+
 This project contains a suite of modular Python scripts designed to harvest, clean, and consolidate local F3 region data (like WordPress backblasts or legacy Google Sheets) into a clean, standardized format suitable for the **F3 National Database**.
 
 ## Modularity

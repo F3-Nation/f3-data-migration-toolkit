@@ -3,142 +3,16 @@ import xml.etree.ElementTree as ET
 import csv
 import os
 import re
-from html import unescape
+import glob
 from email.utils import parsedate_to_datetime
 from datetime import datetime
-import glob
+import utils
 
-def html_to_text(html_content):
-    if not html_content:
-        return ''
-    
-    # Replace block-level tags and line breaks with newlines to maintain readability
-    text = re.sub(r'<\s*(br\s*/?|/p|/div|/h[1-6]|/li|/tr)[^>]*>', '\n', html_content, flags=re.IGNORECASE)
-    
-    # Remove all other HTML tags
-    text = re.sub(r'<[^>]+>', '', text)
-    
-    # Unescape HTML entities like &nbsp;, &amp;
-    text = unescape(text)
-    
-    # Clean up whitespace: replace multiple spaces with single space
-    lines = text.split('\n')
-    cleaned_lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in lines]
-    
-    # Join lines and collapse multiple newlines to max two (paragraphs)
-    text = '\n'.join(cleaned_lines)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    
-    return text.strip()
-
-def clean_text(text):
-    if not text:
-        return ''
-        
-    # Unescape HTML entities
-    text = unescape(text)
-    
-    # Replace smart quotes and similar problematic typographic characters
-    text = text.replace('’', "'").replace('‘', "'")
-    text = text.replace('”', '"').replace('“', '"')
-    text = text.replace('–', '-').replace('—', '-')
-    text = text.replace('…', '...')
-    
-    # Remove null bytes and other control chars that might break CSV loaders
-    text = text.replace('\x00', '')
-    return text.strip()
-
-import json
-
-def load_aliases():
-    try:
-        with open('import/aliases.json', 'r', encoding='utf-8-sig', errors='ignore') as f:
-            raw_aliases = json.load(f)
-            # Scrub non-alphanumeric from both keys and vals to ensure a clean lookup
-            aliases = {}
-            for k, v in raw_aliases.items():
-                clean_k = re.sub(r'[^a-zA-Z0-9]', '', k.lower())
-                clean_v = re.sub(r'[^a-zA-Z0-9]', '', v.lower())
-                aliases[clean_k] = clean_v
-    except FileNotFoundError:
-        aliases = {}
-        
-        
-    try:
-        with open('import/display_aliases.json', 'r', encoding='utf-8') as f:
-            display_aliases = json.load(f)
-    except FileNotFoundError:
-        display_aliases = {}
-        
-    return aliases, display_aliases
-
-USER_ALIASES, DISPLAY_ALIASES = load_aliases()
+# Load Aliases at module level
+USER_ALIASES, DISPLAY_ALIASES = utils.load_aliases()
 
 def normalize_user(name):
-    if not name:
-        return ''
-    
-    # Clean text and remove common `@` tagging
-    cleaned = clean_text(name).lstrip('@')
-    if not cleaned:
-        return ''
-        
-    # Strip parentheticals entirely
-    cleaned = re.sub(r'\(.*?\)', '', cleaned)
-    
-    # Strip common suffixes
-    cleaned = re.sub(r'(?i)\bqic\b', '', cleaned)
-    cleaned = re.sub(r'(?i)\bfngs?\b', '', cleaned)
-    
-    # Make everything purely alphanumeric
-    lowercased = cleaned.lower()
-    lowercased = re.sub(r'[^a-zA-Z0-9]', '', lowercased)
-    
-    if lowercased in USER_ALIASES:
-        return USER_ALIASES[lowercased]
-    return lowercased
-
-def format_time(time_str):
-    if not time_str:
-        return ''
-    time_str = time_str.strip().lower()
-    match = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)?', time_str)
-    if not match:
-        return ''
-    
-    hour = int(match.group(1))
-    minute = int(match.group(2) or 0)
-    ampm = match.group(3)
-    
-    if ampm == 'pm' and hour < 12:
-        hour += 12
-    elif ampm == 'am' and hour == 12:
-        hour = 0
-        
-    return f"{hour:02d}{minute:02d}"
-
-def load_locations(locations_csv):
-    locations = {}
-    weekday_map = {}
-    if not os.path.exists(locations_csv):
-        print(f"Warning: {locations_csv} not found. Location mappings will fail.")
-        return locations, weekday_map
-        
-    with open(locations_csv, 'r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            workout = row.get('Workout', '').strip()
-            if workout:
-                locations[workout] = {
-                    'org_id': row.get('orgId', '').replace(',', ''),
-                    'location_id': row.get('locationId', '').replace(',', ''),
-                    'start_time': format_time(row.get('startTime', ''))
-                }
-                
-                weekday = row.get('weekDay', '').strip()
-                if weekday:
-                    weekday_map[weekday] = workout
-    return locations, weekday_map
+    return utils.normalize_user(name, USER_ALIASES)
 
 def convert_xml_to_csv(xml_file, locations_csv, output_csv):
     # Namespace dictionary
@@ -152,7 +26,7 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         print(f"Error: {xml_file} not found.")
         return
 
-    locations_map, weekday_map = load_locations(locations_csv)
+    locations_map, weekday_map = utils.load_locations(locations_csv)
     
     paxminer_slack_ids = {}
     pm_user_files = glob.glob('import/PAXminer_users_*.csv')
@@ -236,14 +110,14 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                 # Store it under stripped login for direct matches
                 norm_login = re.sub(r'[^a-zA-Z0-9]', '', login.lower())
                 wp_authors[norm_login] = {
-                    'email': author.findtext('wp:author_email', namespaces=ns) or '',
+                    'email': utils.clean_text(author.findtext('wp:author_email', namespaces=ns) or '').lower(),
                     'first_name': author.findtext('wp:author_first_name', namespaces=ns) or '',
                     'last_name': author.findtext('wp:author_last_name', namespaces=ns) or '',
                     'display_name': author.findtext('wp:author_display_name', namespaces=ns) or ''
                 }
                 
                 # Also store it under stripped display_name so "cheeeeeese" maps cleanly to its login property!
-                disp_name = author.findtext('wp:author_display_name', namespaces=ns) or ''
+                disp_name = utils.clean_text(author.findtext('wp:author_display_name', namespaces=ns) or '')
                 if disp_name:
                     norm_disp = re.sub(r'[^a-zA-Z0-9]', '', disp_name.lower())
                     if norm_disp != norm_login:
@@ -344,13 +218,13 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
             continue
             
         title_raw = item.findtext('title') or ''
-        title = clean_text(title_raw).replace('\r', ' ').replace('\n', ' ')
+        title = utils.clean_text(title_raw).replace('\r', ' ').replace('\n', ' ')
         title = ' '.join(title.split()) # collapse whitespace
 
         status = item.findtext('wp:status', namespaces=ns)
         
         # Parse Dates
-        pub_date_str = item.findtext('pubDate')
+        pub_date_str = utils.clean_text(item.findtext('pubDate') or '')
         start_date = ''
         weekday_name = ''
         
@@ -375,11 +249,11 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                 print(f"Warning: Failed to parse date '{pub_date_str}': {e}")
                 
         # Parse Creator (Q)
-        creator = clean_text(item.findtext('dc:creator', namespaces=ns))
+        creator = utils.clean_text(item.findtext('dc:creator', namespaces=ns))
         
         # Parse Backblast content
         raw_content = item.findtext('content:encoded', namespaces=ns)
-        backblast = clean_text(html_to_text(raw_content))
+        backblast = utils.clean_text(utils.html_to_text(raw_content))
         
         # Heuristic to detect if the author pasted the whole post into the title box
         if len(title) > 100 and len(backblast) < 50:
@@ -391,7 +265,7 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         
         for cat in item.findall('category'):
             domain = cat.attrib.get('domain')
-            text = clean_text(cat.text)
+            text = utils.clean_text(cat.text)
             if domain == 'category' and text:
                 categories.append(text)
             elif domain == 'post_tag' and text:
@@ -621,7 +495,14 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         print(f"Generated {pax_users_added} missing paxminer users to {pax_unmatched_file}")
 
 if __name__ == "__main__":
-    input_file = 'import/f3stsimons.wordpress.com.2026-02-23.000.xml'
-    locations_file = 'import/locations.csv'
-    output_file = 'output/output.csv' # This variable is no longer used for the main output file name
-    convert_xml_to_csv(input_file, locations_file, output_file)
+    # Dynamic XML detection
+    xml_files = glob.glob('import/*.xml')
+    if not xml_files:
+        print("Error: No WordPress XML file found in import/ directory.")
+    else:
+        input_file = xml_files[0]
+        locations_file = 'import/locations.csv'
+        output_file = f'output/{config.REGION_NAME}_wordpress_backblasts.csv'
+        
+        print(f"Processing: {input_file}")
+        convert_xml_to_csv(input_file, locations_file, output_file)

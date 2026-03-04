@@ -318,8 +318,12 @@ def build_alias_map():
                 f_name = row.get('Q', '')
                 add_unrecognized(normalize_name(f_name), clean_text(f_name), '', '', '')
 
-    xml_file = 'import/f3stsimons.wordpress.com.2026-02-23.000.xml'
-    if os.path.exists(xml_file):
+    import glob
+    xml_files = glob.glob('import/*.xml')
+    # Can process multiple XML files if needed, but start with the first found
+    if xml_files:
+        xml_file = xml_files[0]
+        print(f"Scraping aliases from: {xml_file}")
         ns = {'wp': 'http://wordpress.org/export/1.2/'}
         tree = ET.parse(xml_file)
         root = tree.getroot()
