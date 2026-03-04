@@ -5,7 +5,7 @@ This project contains a suite of modular Python scripts designed to harvest, cle
 ## Modularity
 Because different F3 regions use different tools, these scripts are built **modularly**. You don't have to use the entire pipeline. 
 - If your region only has a WordPress XML export and nothing else, you can run just `convert.py`.
-- If your region only manages data via Google Sheets, you can primarily rely on `generate_user_reports.py` and `merge_q_schedule.py`.
+- If your region only manages data via Google Sheets, you can primarily rely on `generate_user_reports.py` and `extract_missing_qs.py`.
 
 Use the tools that fit your region's historical tracking methods.
 
@@ -22,7 +22,10 @@ Use the tools that fit your region's historical tracking methods.
 
 ### `output/` (The Final Generated Data)
 *This is where the scripts will drop the cleaned, formatted data ready for national integration.*
-* `output.csv`: The master backblast repository linking Dates, AOs, Qs, and PAX attendees.
+* `{REGION_NAME}_wordpress_backblasts.csv`: The master backblast repository linking Dates, AOs, Qs, and PAX attendees from WordPress exports.
+* `{REGION_NAME}_missing_users.csv`: Users assigned a TMP_ID_X because they could not be found directly.
+* `{REGION_NAME}_qschedule_nobackblast.csv`: Q schedule events that have no corresponding backblast in the National DB or WordPress extracts.
+* `{REGION_NAME}_missingQs.csv`: Unmatched users specifically extracted from the legacy q schedule.
 * `my_users.csv`: A unified master roster of every single PAX extracted from legacy files, PAXminer, and WordPress. 
 * `my_users_output.csv`: The official output received from the National `BulkUserCreate` script containing definitive database IDs.
 * `users_alias.csv`: An audit log documenting exactly how the scripts intelligently matched your old regional aliases to actual F3 National accounts.
@@ -54,7 +57,13 @@ To run the full suite, execute these processes in the following exact order:
 **Command:** `python import_users.py my_users.csv`
 **Action Needed:** Move the resulting `my_users_output.csv` straight into your `output/` directory so our data conversion scripts can read the brand new database IDs!
 
-#### 4. `python convert.py` & `python merge_q_schedule.py`
-**Purpose:** Parses the WordPress XML feed and the legacy Q schedule array. Both scripts pull directly from the `my_users_output.csv` ID mappings you just acquired to ensure every single attendance record points to a fully valid integer ID. No stragglers left behind!
+#### 4. Configure Region (`config.py`)
+**Purpose:** Setup your specific region name so that the file outputs are accurately prefixed.
+
+#### 5. `python convert.py` & `python extract_missing_qs.py`
+**Purpose:** Parses the WordPress XML feed and the legacy Q schedule array. `convert.py` directly translates the WP XML backasts into `output/{REGION_NAME}_wordpress_backblasts.csv`. `extract_missing_qs.py` parses legacy Qs and cross references the national DB to output cleanly formatted skipped backblasts to `output/{REGION_NAME}_qschedule_nobackblast.csv`.
 **Outputs:**
-- `output/output.csv`
+- `output/{REGION_NAME}_wordpress_backblasts.csv`
+- `output/{REGION_NAME}_qschedule_nobackblast.csv`
+- `output/{REGION_NAME}_missing_users.csv`
+- `output/{REGION_NAME}_missingQs.csv`

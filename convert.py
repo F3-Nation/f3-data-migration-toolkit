@@ -1,3 +1,4 @@
+import config
 import xml.etree.ElementTree as ET
 import csv
 import os
@@ -51,10 +52,17 @@ import json
 
 def load_aliases():
     try:
-        with open('import/aliases.json', 'r', encoding='utf-8') as f:
-            aliases = json.load(f)
+        with open('import/aliases.json', 'r', encoding='utf-8-sig', errors='ignore') as f:
+            raw_aliases = json.load(f)
+            # Scrub non-alphanumeric from both keys and vals to ensure a clean lookup
+            aliases = {}
+            for k, v in raw_aliases.items():
+                clean_k = re.sub(r'[^a-zA-Z0-9]', '', k.lower())
+                clean_v = re.sub(r'[^a-zA-Z0-9]', '', v.lower())
+                aliases[clean_k] = clean_v
     except FileNotFoundError:
         aliases = {}
+        
         
     try:
         with open('import/display_aliases.json', 'r', encoding='utf-8') as f:
@@ -78,19 +86,16 @@ def normalize_user(name):
     # Strip parentheticals entirely
     cleaned = re.sub(r'\(.*?\)', '', cleaned)
     
-    # Lowercase to prevent case fragmentation (e.g. Woz vs woz)
-    lowercased = cleaned.lower().strip()
+    # Strip common suffixes
+    cleaned = re.sub(r'(?i)\bqic\b', '', cleaned)
+    cleaned = re.sub(r'(?i)\bfngs?\b', '', cleaned)
     
-    # Strip isolating suffixes/prefixes like QIC and FNG
-    lowercased = re.sub(r'\bqic\b', '', lowercased)
-    lowercased = re.sub(r'\bfngs?\b', '', lowercased)
+    # Make everything purely alphanumeric
+    lowercased = cleaned.lower()
+    lowercased = re.sub(r'[^a-zA-Z0-9]', '', lowercased)
     
-    lowercased = lowercased.strip()
-    
-    # Resolve against canonical alias mapping
     if lowercased in USER_ALIASES:
         return USER_ALIASES[lowercased]
-        
     return lowercased
 
 def format_time(time_str):
@@ -162,19 +167,60 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
     # Pre-build lookup map: normalized_name -> database id
     canonical_id_map = {}
     
+    # Prefer region_id 25256 in case of dupes
+    try:
+        bq_files = glob.glob('import/bq-users-*.csv')
+        if bq_files:
+            with open(bq_files[0], 'r', encoding='utf-8-sig', errors='ignore') as f:
+                for row in csv.DictReader(f):
+                    fname = normalize_user(row.get('f3_name', ''))
+                    uid = row.get('user_id', '')
+                    rid = row.get('home_region_id', '')
+                    if fname and uid:
+                        if fname in canonical_id_map:
+                            if rid == config.REGION_ID:
+                                canonical_id_map[fname] = uid
+                        else:
+                            canonical_id_map[fname] = uid
+    except Exception as e:
+        print(f"Warning: Failed to load bq-users. {e}")
+        
+    email_to_id_map = {}
     try:
         with open('import/user_master.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
             for row in csv.DictReader(f):
-                fname = normalize_user(row.get('f3_name', ''))
                 uid = row.get('id', '')
-                if fname and uid:
-                    canonical_id_map[fname] = uid
+                email = row.get('email', '').strip().lower()
+                if uid and email and email != '[null]':
+                    email_to_id_map[email] = uid
     except Exception as e:
-        print(f"Warning: Failed to load import/user_master.csv. ID mappings will be missing! {e}")
+        print(f"Warning: Failed to load user_master.csv. {e}")
+        
+    legacy_emails = {}
+    for legacy_file in ['import/legacy_pax_directory.csv', 'import/legacy_master_directory.csv']:
+        if os.path.exists(legacy_file):
+            try:
+                with open(legacy_file, 'r', encoding='utf-8-sig', errors='ignore') as f:
+                    for row in csv.DictReader(f):
+                        fname = normalize_user(row.get('F3_Name', ''))
+                        email = row.get('Email', '').strip()
+                        if fname and email and fname not in legacy_emails:
+                            legacy_emails[fname] = email
+            except Exception as e:
+                pass
 
     user_id_map = {}
     next_unmatched_id = 1
     unmatched_users_data = {}  # Store unmatched users to write out later
+    paxminer_unmatched_data = {} # Store users with slack IDs that are unmatched
+    
+    missing_users_file = f"output/{config.REGION_NAME}_missing_users.csv"
+    if os.path.exists(missing_users_file):
+        os.remove(missing_users_file)
+        
+    pax_unmatched_file = f"output/{config.REGION_NAME}_paxminer_unmatched.csv"
+    if os.path.exists(pax_unmatched_file):
+        os.remove(pax_unmatched_file)
     
     # 1. First Pass: Cache WP Author Metadata so we know who is who if they go unmatched
     wp_authors = {}
@@ -187,12 +233,21 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         for author in channel.findall('wp:author', namespaces=ns):
             login = author.findtext('wp:author_login', namespaces=ns)
             if login:
-                wp_authors[login.lower()] = {
+                # Store it under stripped login for direct matches
+                norm_login = re.sub(r'[^a-zA-Z0-9]', '', login.lower())
+                wp_authors[norm_login] = {
                     'email': author.findtext('wp:author_email', namespaces=ns) or '',
                     'first_name': author.findtext('wp:author_first_name', namespaces=ns) or '',
                     'last_name': author.findtext('wp:author_last_name', namespaces=ns) or '',
                     'display_name': author.findtext('wp:author_display_name', namespaces=ns) or ''
                 }
+                
+                # Also store it under stripped display_name so "cheeeeeese" maps cleanly to its login property!
+                disp_name = author.findtext('wp:author_display_name', namespaces=ns) or ''
+                if disp_name:
+                    norm_disp = re.sub(r'[^a-zA-Z0-9]', '', disp_name.lower())
+                    if norm_disp != norm_login:
+                        wp_authors[norm_disp] = wp_authors[norm_login]
     
     def extract_explicit_date_and_ao(text, locations_map):
         if not text:
@@ -243,21 +298,36 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
         if normalized_name in user_id_map:
             return user_id_map[normalized_name]
             
-        # Create a new TMP_ID
-        new_id = f"TMP_ID_{next_unmatched_id}"
-        next_unmatched_id += 1
-        user_id_map[normalized_name] = new_id
-        
         # Try to pull email from WP metadata
         email_addr = ''
         if normalized_name in wp_authors:
             email_addr = wp_authors[normalized_name].get('email', '')
             
-        unmatched_users_data[new_id] = {
-            'id': new_id,
-            'f3_name': name.strip(),
-            'email': email_addr
-        }
+        if not email_addr and normalized_name in legacy_emails:
+            email_addr = legacy_emails[normalized_name]
+            
+        if email_addr and email_addr.lower() in email_to_id_map:
+            # We salvaged a match by email! Fast-track it.
+            canonical_id_map[normalized_name] = email_to_id_map[email_addr.lower()]
+            return email_to_id_map[email_addr.lower()]
+            
+        # Create a new TMP_ID
+        new_id = f"TMP_ID_{next_unmatched_id}"
+        next_unmatched_id += 1
+        user_id_map[normalized_name] = new_id
+            
+        if normalized_name in paxminer_slack_ids:
+            paxminer_unmatched_data[new_id] = {
+                'slack_id': paxminer_slack_ids[normalized_name],
+                'f3_name': name.strip(),
+                'email': email_addr
+            }
+        else:
+            unmatched_users_data[new_id] = {
+                'id': new_id,
+                'f3_name': name.strip(),
+                'email': email_addr
+            }
         
         return new_id
 
@@ -495,26 +565,25 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
 
     # -------------------------------------------------------------
     headers = ['org_id', 'location_id', 'series_id', 'start_date', 'start_time', 'name', 'description', 'backblast', 'user_id', 'post_type']
-    with open('output/output.csv', 'w', newline='', encoding='utf-8') as f:
+    with open(f"output/{config.REGION_NAME}_wordpress_backblasts.csv", 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=headers)
         writer.writeheader()
         writer.writerows(final_out_data)
         
-    print(f"Successfully converted data to output/output.csv ({len(final_out_data)} rows).")
+    print(f"Successfully converted data to output/{config.REGION_NAME}_wordpress_backblasts.csv ({len(final_out_data)} rows).")
 
     # Save any new unmatched users to insert file
     new_users_added = 0
-    if 'unmatched_users_data' in globals() or unmatched_users_data:
-        insert_file = 'output/missing_users.csv'
-        file_exists = os.path.exists(insert_file)
+    if unmatched_users_data:
+        file_exists = os.path.exists(missing_users_file)
         
         existing_ids = set()
         if file_exists:
-            with open(insert_file, 'r', encoding='utf-8') as f:
+            with open(missing_users_file, 'r', encoding='utf-8') as f:
                 for row in csv.DictReader(f):
                     existing_ids.add(row.get('id', ''))
                     
-        with open(insert_file, 'a', newline='', encoding='utf-8') as f:
+        with open(missing_users_file, 'a', newline='', encoding='utf-8') as f:
             headers = ['id', 'f3_name', 'email']
             writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
             if not file_exists:
@@ -529,10 +598,30 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
                     })
                     new_users_added += 1
                     
-        print(f"Appended {new_users_added} missing users to {insert_file}")
+        print(f"Appended {new_users_added} missing users to {missing_users_file}")
+
+    # Save any slack paxminer unmatched
+    pax_users_added = 0
+    if paxminer_unmatched_data:
+        file_exists = os.path.exists(pax_unmatched_file)
+        with open(pax_unmatched_file, 'a', newline='', encoding='utf-8') as f:
+            headers = ['slack_id', 'f3_name', 'email']
+            writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
+            if not file_exists:
+                writer.writeheader()
+                
+            for row_id, data in paxminer_unmatched_data.items():
+                writer.writerow({
+                    'slack_id': data.get('slack_id', ''),
+                    'f3_name': data.get('f3_name', ''),
+                    'email': data.get('email', '')
+                })
+                pax_users_added += 1
+                
+        print(f"Generated {pax_users_added} missing paxminer users to {pax_unmatched_file}")
 
 if __name__ == "__main__":
     input_file = 'import/f3stsimons.wordpress.com.2026-02-23.000.xml'
     locations_file = 'import/locations.csv'
-    output_file = 'output/output.csv'
+    output_file = 'output/output.csv' # This variable is no longer used for the main output file name
     convert_xml_to_csv(input_file, locations_file, output_file)
