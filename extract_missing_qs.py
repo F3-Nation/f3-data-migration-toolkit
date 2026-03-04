@@ -216,7 +216,7 @@ def main():
                 except Exception:
                     continue
                     
-                if start_date > '2026-03-07':
+                if start_date > '2026-03-04':
                     continue
                     
                 workout_name = str(row.get('Workout/Event') or '').strip()
