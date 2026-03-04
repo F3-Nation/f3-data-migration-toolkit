@@ -45,6 +45,9 @@ To run the full suite, execute these processes in the following exact order:
 #### 0. (Optional) `python fetch_master_users.py`
 **Purpose:** Connects directly to the F3 National PostgreSQL Database to download the latest global roster into `import/user_master.csv`. This prevents having to manually download the CSV file. Note: This assumes you have access to a `.env` file with database credentials.
 
+> [!IMPORTANT]
+> This script connects to the production environment and requires specific database credentials. Most regions will not have direct access to run this script. If you are a Regional Admin, you should work with a National Admin to either have them run this script for you or provide you with an updated `user_master.csv` export from the National Database.
+
 #### 1. `python build_alias_map.py`
 **Purpose:** Scrapes all legacy files and WordPress XML data to find unrecognized user names. It uses intelligent algorithms (exact email, first/last name matches, and heuristic Regex scrubbing) to map these stray aliases back to authoritative users in `user_master.csv`.
 
