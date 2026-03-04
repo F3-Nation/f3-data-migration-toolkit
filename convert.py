@@ -130,8 +130,8 @@ def load_locations(locations_csv):
             workout = row.get('Workout', '').strip()
             if workout:
                 locations[workout] = {
-                    'org_id': row.get('orgId', ''),
-                    'location_id': row.get('locationId', ''),
+                    'org_id': row.get('orgId', '').replace(',', ''),
+                    'location_id': row.get('locationId', '').replace(',', ''),
                     'start_time': format_time(row.get('startTime', ''))
                 }
                 
@@ -174,7 +174,7 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
             with open(bq_files[0], 'r', encoding='utf-8-sig', errors='ignore') as f:
                 for row in csv.DictReader(f):
                     fname = normalize_user(row.get('f3_name', ''))
-                    uid = row.get('user_id', '')
+                    uid = row.get('user_id', '').replace(',', '')
                     rid = row.get('home_region_id', '')
                     if fname and uid:
                         if fname in canonical_id_map:
@@ -189,7 +189,7 @@ def convert_xml_to_csv(xml_file, locations_csv, output_csv):
     try:
         with open('import/user_master.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
             for row in csv.DictReader(f):
-                uid = row.get('id', '')
+                uid = row.get('id', '').replace(',', '')
                 email = row.get('email', '').strip().lower()
                 if uid and email and email != '[null]':
                     email_to_id_map[email] = uid
