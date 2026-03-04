@@ -25,7 +25,8 @@ Use the tools that fit your region's historical tracking methods.
 * `{REGION_NAME}_wordpress_backblasts.csv`: The master backblast repository linking Dates, AOs, Qs, and PAX attendees from WordPress exports.
 * `{REGION_NAME}_missing_users.csv`: Users assigned a TMP_ID_X because they could not be found directly.
 * `{REGION_NAME}_qschedule_nobackblast.csv`: Q schedule events that have no corresponding backblast in the National DB or WordPress extracts.
-* `{REGION_NAME}_missingQs.csv`: Unmatched users specifically extracted from the legacy q schedule.
+* `{REGION_NAME}_missing_Qs.csv`: Unmatched users specifically extracted from the legacy q schedule.
+* `{REGION_NAME}_paxminer_unmatched.csv`: Users found in PAXminer with a Slack ID but no National User ID (ready for reconciliation).
 * `my_users.csv`: A unified master roster of every single PAX extracted from legacy files, PAXminer, and WordPress. 
 * `my_users_output.csv`: The official output received from the National `BulkUserCreate` script containing definitive database IDs.
 * `users_alias.csv`: An audit log documenting exactly how the scripts intelligently matched your old regional aliases to actual F3 National accounts.
@@ -65,5 +66,6 @@ To run the full suite, execute these processes in the following exact order:
 **Outputs:**
 - `output/{REGION_NAME}_wordpress_backblasts.csv`
 - `output/{REGION_NAME}_qschedule_nobackblast.csv`
+- `output/{REGION_NAME}_paxminer_unmatched.csv`
 - `output/{REGION_NAME}_missing_users.csv`
-- `output/{REGION_NAME}_missingQs.csv`
+- `output/{REGION_NAME}_missing_Qs.csv`
