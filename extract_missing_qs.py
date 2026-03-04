@@ -117,12 +117,24 @@ def main():
             except Exception as e:
                 pass
                 
+    # Source counters for the overview report
+    stats = {
+        'wp_events': 0,
+        'paxminer_attendance': 0,
+        'paxminer_backblasts': 0,
+        'bq_results': 0,
+        'legacy_schedule_total': 0,
+        'legacy_schedule_filtered': 0,
+        'non_workout_events': 0,
+        'missing_backblasts': 0
+    }
+
     # Unmatched trackers
     user_id_map = {}
     next_unmatched_id = 1
     unmatched_qs_data = {}
 
-    locations_map, _ = utils.load_locations('import/locations.csv')
+    locations_map, weekday_map = utils.load_locations('import/locations.csv')
 
     # Find ALL events that happened across PAXminer (bq-results) and WP (output local)
     existing_events = set() # (start_date, workout_name)
@@ -138,6 +150,7 @@ def main():
                 loc_id = row.get('location_id', '').strip()
                 if date and loc_id:
                     existing_events.add((date, loc_id))
+                    stats['bq_results'] += 1
                     
     # 2. PAXminer Attendance and Backblasts (Local copies)
     for pm_pattern in ['import/PAXminer_attendance_view_*.csv', 'import/PAXminer_backblast_*.csv']:
@@ -154,11 +167,23 @@ def main():
                         if ao_name in locations_map:
                             loc_id = locations_map[ao_name].get('location_id', '')
                         elif ao_name.lower() == '1stf':
-                            # In this region, '1stf' often defaults to Sailor's Warning/Jailbreak location
-                            loc_id = '34588'
+                            # Resolve by weekday
+                            try:
+                                dt = pd.to_datetime(date)
+                                weekday = dt.strftime('%A')
+                                if weekday in weekday_map:
+                                    actual_workout = weekday_map[weekday]
+                                    loc_id = locations_map.get(actual_workout, {}).get('location_id', '')
+                            except:
+                                # Fallback if resolution fails
+                                loc_id = '34588'
                             
                         if date and loc_id:
                             existing_events.add((date, loc_id))
+                            if 'attendance' in pm_file.lower():
+                                stats['paxminer_attendance'] += 1
+                            else:
+                                stats['paxminer_backblasts'] += 1
             except Exception as e:
                 print(f"Warning: Failed to load {pm_file}. {e}")
                     
@@ -171,8 +196,10 @@ def main():
                 loc_id = row.get('location_id', '').strip()
                 if date and loc_id:
                     existing_events.add((date, loc_id))
+                    stats['wp_events'] += 1
 
     missing_backblast_events = []
+    non_workout_events = []
 
     try:
         with open('import/legacy_q_schedule.csv', 'r', encoding='utf-8-sig', errors='ignore') as f:
@@ -195,7 +222,21 @@ def main():
                 if not workout_name or not q_name:
                     continue
                     
-                loc_data = locations_map.get(workout_name, {})
+                stats['legacy_schedule_total'] += 1
+                
+                # Check if this is a workout or a social event
+                loc_data = locations_map.get(workout_name)
+                if not loc_data:
+                    # Non-workout event (Happy Hour, QSource, etc.)
+                    non_workout_events.append({
+                        'date': start_date,
+                        'name': workout_name,
+                        'q': q_name
+                    })
+                    stats['non_workout_events'] += 1
+                    continue
+                
+                stats['legacy_schedule_filtered'] += 1
                 loc_id = loc_data.get('location_id', '')
                 
                 # Check if this date+loc_id combination exists in our known backblasts
@@ -263,6 +304,42 @@ def main():
         if os.path.exists(missing_qs_file):
             os.remove(missing_qs_file)
             
+    # Write non-workout events
+    non_workout_file = f"output/{config.REGION_NAME}_qschedule_nonworkoutevents.csv"
+    if non_workout_events:
+        with open(non_workout_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=['date', 'name', 'q'])
+            writer.writeheader()
+            writer.writerows(non_workout_events)
+        print(f"Generated {non_workout_file} with {len(non_workout_events)} non-workout events.")
+    
+    # Generate Event Overview Report
+    report_file = "output/event_overview.md"
+    with open(report_file, 'w', encoding='utf-8') as f:
+        f.write("# F3 Region Data Integrator: Event Overview Report\n\n")
+        f.write(f"**Region:** {config.REGION_NAME}\n")
+        f.write(f"**Generated:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        
+        f.write("## Source Data Counts\n")
+        f.write("| Source | Count |\n")
+        f.write("| :--- | :--- |\n")
+        f.write(f"| WordPress Backblasts | {stats['wp_events']} |\n")
+        f.write(f"| PAXminer Attendance | {stats['paxminer_attendance']} |\n")
+        f.write(f"| PAXminer Backblasts | {stats['paxminer_backblasts']} |\n")
+        f.write(f"| National DB results (BQ) | {stats['bq_results']} |\n")
+        f.write(f"| **Total Unique Processed Events** | {len(existing_events)} |\n\n")
+        
+        f.write("## Legacy Q Schedule Analysis\n")
+        f.write("| Category | Count |\n")
+        f.write("| :--- | :--- |\n")
+        f.write(f"| Total Events Evaluated | {stats['legacy_schedule_total']} |\n")
+        f.write(f"| Filtered Workouts (Deficiency Candidates) | {stats['legacy_schedule_filtered']} |\n")
+        f.write(f"| Non-Workout Events (Social/Q-Source) | {stats['non_workout_events']} |\n")
+        f.write(f"| **Remaining Missing Backblasts** | {len(deduped)} |\n\n")
+        
+        f.write("> **Note:** Missing backblasts are workout events found in the Q Schedule that strictly do NOT exist in WordPress or PAXminer/National DB records.\n")
+    
+    print(f"Generated {report_file}")
             
 if __name__ == "__main__":
     main()
