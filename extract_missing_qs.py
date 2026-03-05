@@ -177,7 +177,8 @@ def main():
                                     loc_id = locations_map.get(actual_workout, {}).get('location_id', '')
                             except:
                                 # Fallback if resolution fails
-                                loc_id = '34588'
+                                loc_id = ''
+                                print(f"Warning: Could not resolve general channel '{ao_name}' for date {date}.")
                             
                         if date and loc_id:
                             existing_events.add((date, loc_id))

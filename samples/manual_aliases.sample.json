@@ -1,0 +1,7 @@
+{
+    "legacy alias 1": "Canonical F3 Name",
+    "fng bob": "SpongeBob",
+    "yogi": "Yogi Bear",
+    "jumanji (dr)": "Jumanji - JAX GUY",
+    "_comment": "Use this file for explicit, hardcoded overrides where fuzzy matching fails or maps to the wrong National ID. The key should be the normalized (lowercase, punctuation-stripped) legacy name, and the value should be the exact National f3_name format you want it to resolve to."
+}

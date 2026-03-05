@@ -126,30 +126,14 @@ def build_alias_map():
     match_logs = []
     
     # Reusable matching engine
-    manual_aliases = {
-        "bearded millenial": "beardedmillennial",
-        "bearded millennial": "beardedmillennial",
-        "bearded millenial (bm)": "beardedmillennial",
-        "bm": "beardedmillennial",
-        "tin man 2.0": "TinManToo",
-        "tin man (2.0?)": "TinManToo",
-        "tinman 2.0": "TinManToo",
-        "tinman2": "TinManToo",
-        "yogibear": "Yogi Bear",
-        "yogi": "Yogi Bear",
-        "cancan": "can can",
-        "sop": "Son of a Preacher",
-        "joshuaesc": "Twinkle",
-        "big bird": "Big Bird-JAX GUY",
-        "hensell harris": "Blackberry",
-        "easy go": "EZ GO",
-        "howell": "Mrs. Howell",
-        "alzheimer": "Alzheimer's",
-        "jumanji": "Jumanji - JAX GUY",
-        "rob lachance": "Yogi Bear",
-        "tebow": "Teebow",
-        "used-to": "Used-To"
-    }
+    manual_aliases = {}
+    manual_aliases_path = 'import/manual_aliases.json'
+    if os.path.exists(manual_aliases_path):
+        try:
+            with open(manual_aliases_path, 'r', encoding='utf-8') as f:
+                manual_aliases = json.load(f)
+        except Exception as e:
+            print(f"Warning: Failed to load {manual_aliases_path}: {e}")
 
     def find_match(unrec_norm, unrec_data, target_pool):
         target_f3_names = [u['f3_name'] for u in target_pool]
